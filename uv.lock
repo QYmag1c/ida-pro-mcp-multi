@@ -1,0 +1,36 @@
+version = 1
+revision = 2
+requires-python = ">=3.11"
+
+[[package]]
+name = "ida-pro-mcp"
+version = "2.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "idapro" },
+    { name = "tomli-w" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "idapro", specifier = ">=0.0.7" },
+    { name = "tomli-w", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "idapro"
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/65/b49019b4713b852349b6516b786c8542930aca7701bb2552b18f4e4a4e25/idapro-0.0.7.tar.gz", hash = "sha256:0b2e184b19e4d8404ea48b1f17f39b21b054931315940ee9716ef8559144988f", size = 966886, upload-time = "2025-10-29T09:07:21.695Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/5d/6e6565d9a1d6ecf1b48a2bea326f0e3dbe4c3199adfc0a5456b83d235f99/idapro-0.0.7-py3-none-any.whl", hash = "sha256:3cb8d48ac21a19e6a0ef65eacd0005a1f9c40a264a7bcb675914eaa20c6e1371", size = 1999440, upload-time = "2025-10-29T09:07:19.998Z" },
+]
+
+[[package]]
+name = "tomli-w"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/75/241269d1da26b624c0d5e110e8149093c759b7a286138f4efd61a60e75fe/tomli_w-1.2.0.tar.gz", hash = "sha256:2dd14fac5a47c27be9cd4c976af5a12d87fb1f0b4512f81d69cce3b35ae25021", size = 7184, upload-time = "2025-01-15T12:07:24.262Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/18/c86eb8e0202e32dd3df50d43d7ff9854f8e0603945ff398974c1d91ac1ef/tomli_w-1.2.0-py3-none-any.whl", hash = "sha256:188306098d013b691fcadc011abd66727d3c414c571bb01b1a174ba8c983cf90", size = 6675, upload-time = "2025-01-15T12:07:22.074Z" },
+]
