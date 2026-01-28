@@ -46,6 +46,62 @@ def is_port_in_use(port: int, host: str = GATEWAY_HOST) -> bool:
         return s.connect_ex((host, port)) == 0
 
 
+def get_python_executable() -> str:
+    """Get the Python executable path
+    
+    In IDA environment, sys.executable points to IDA, not Python.
+    We need to find the actual Python interpreter.
+    """
+    # Check if sys.executable is actually Python
+    exe_name = os.path.basename(sys.executable).lower()
+    if 'python' in exe_name:
+        return sys.executable
+    
+    # In IDA, we need to find Python differently
+    # Try to get it from the Python DLL path
+    import sysconfig
+    
+    # Method 1: Try to find python.exe in the same directory as the Python DLL
+    try:
+        # Get the Python installation prefix
+        prefix = sysconfig.get_config_var('prefix') or sys.prefix
+        if prefix:
+            if sys.platform == 'win32':
+                python_exe = os.path.join(prefix, 'python.exe')
+            else:
+                python_exe = os.path.join(prefix, 'bin', 'python3')
+            if os.path.exists(python_exe):
+                return python_exe
+    except Exception:
+        pass
+    
+    # Method 2: Try common Python paths on Windows
+    if sys.platform == 'win32':
+        # Try to find Python in PATH
+        import shutil
+        python_path = shutil.which('python')
+        if python_path:
+            return python_path
+        
+        # Try common installation paths
+        for version in ['313', '312', '311', '310', '39']:
+            for base in [os.environ.get('LOCALAPPDATA', ''), os.environ.get('PROGRAMFILES', '')]:
+                if base:
+                    python_exe = os.path.join(base, 'Programs', 'Python', f'Python{version}', 'python.exe')
+                    if os.path.exists(python_exe):
+                        return python_exe
+    else:
+        # Unix: try common paths
+        for python_name in ['python3', 'python']:
+            import shutil
+            python_path = shutil.which(python_name)
+            if python_path:
+                return python_path
+    
+    # Fallback: return sys.executable and hope for the best
+    return sys.executable
+
+
 def start_gateway_process() -> bool:
     """Start the Gateway Server as a detached process
     
@@ -64,14 +120,16 @@ def start_gateway_process() -> bool:
             print("[MCP] Gateway script not found")
             return False
     
-    print(f"[MCP] Starting Gateway Server...")
+    # Get the correct Python executable
+    python_exe = get_python_executable()
+    print(f"[MCP] Starting Gateway Server using Python: {python_exe}")
     
     if sys.platform == 'win32':
         # Windows: use CREATE_NEW_PROCESS_GROUP and DETACHED_PROCESS
         CREATE_NEW_PROCESS_GROUP = 0x00000200
         DETACHED_PROCESS = 0x00000008
         subprocess.Popen(
-            [sys.executable, gateway_script],
+            [python_exe, gateway_script],
             creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
             close_fds=True,
             stdout=subprocess.DEVNULL,
@@ -80,7 +138,7 @@ def start_gateway_process() -> bool:
     else:
         # Unix: use start_new_session for daemon
         subprocess.Popen(
-            [sys.executable, gateway_script],
+            [python_exe, gateway_script],
             start_new_session=True,
             close_fds=True,
             stdout=subprocess.DEVNULL,
