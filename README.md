@@ -105,27 +105,57 @@ AI-assisted vulnerability scanning to identify potentially dangerous function ca
 
 **Note:** Detailed results are saved to `.ida-mcp-vuln/` folder to minimize token usage.
 
-## Installation
-
-Install the package:
-
-```sh
-pip install https://github.com/YOUR_USERNAME/ida-pro-mcp-multi/archive/refs/heads/main.zip
-```
-
-Configure and install the IDA Plugin:
-
-```sh
-ida-pro-mcp --install
-```
-
-**Important**: Restart IDA and your MCP client completely for the installation to take effect.
-
 ## Prerequisites
 
-- [Python](https://www.python.org/downloads/) (**3.11 or higher**)
 - [IDA Pro](https://hex-rays.com/ida-pro) (8.3 or higher, 9 recommended)
-- Any MCP-compatible client (Claude, Cursor, VS Code, etc.)
+- Any MCP-compatible client (Claude, Cursor, VS Code, Roo Code, etc.)
+
+## Installation
+
+### Step 1: Set Environment Variable
+
+Add IDA's Python `site-packages` directory to your environment variables:
+
+**Windows:**
+```
+D:\your\path\to\ida\python311\Lib\site-packages
+```
+
+Add this path to your system's `PYTHONPATH` environment variable.
+
+### Step 2: Install MCP Package
+
+Open a terminal in IDA's Python directory and run:
+
+```bash
+# Navigate to IDA's Python directory
+cd "D:\your\path\to\ida\python311"
+
+# Install the MCP package
+python.exe -m pip install --upgrade git+https://github.com/QYmag1c/ida-pro-mcp-multi
+```
+
+### Step 3: Install IDA Plugin and Configure MCP Clients
+
+```bash
+# Install IDA plugin and configure MCP clients
+"D:\your\path\to\ida\python311\Scripts\ida-pro-mcp.exe" --install
+
+# (Optional) View MCP configuration for manual setup
+"D:\your\path\to\ida\python311\Scripts\ida-pro-mcp.exe" --config
+```
+
+**Note:** Replace `D:\your\path\to\ida` with your actual IDA Pro installation path.
+
+### Step 4: Restart
+
+**Important**: Restart IDA Pro and your MCP client completely for the installation to take effect.
+
+### Verify Installation
+
+1. Open IDA Pro and load a binary
+2. Go to **Edit → Plugins → MCP** (or press `Ctrl+Alt+M`)
+3. You should see `[MCP] Server started` in the output window
 
 ## Architecture
 
