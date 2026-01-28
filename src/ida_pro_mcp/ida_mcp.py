@@ -204,11 +204,32 @@ class MCP(idaapi.plugin_t):
         binary_path = idc.get_input_file_path()
         binary_name = os.path.basename(binary_path) if binary_path else "unknown"
         
-        # Collect metadata
+        # Collect metadata (compatible with IDA 8.x and 9.x)
+        try:
+            # IDA 9.0+ uses ida_ida module
+            import ida_ida
+            processor = ida_ida.inf_get_procname()
+        except (ImportError, AttributeError):
+            # IDA 8.x uses get_inf_structure()
+            try:
+                processor = idaapi.get_inf_structure().procname
+            except AttributeError:
+                processor = "unknown"
+        
+        try:
+            bits = 64 if idaapi.inf_is_64bit() else 32
+        except AttributeError:
+            bits = 64  # Default to 64-bit
+        
+        try:
+            base_addr = hex(idaapi.get_imagebase())
+        except AttributeError:
+            base_addr = "0x0"
+        
         metadata = {
-            "processor": idaapi.get_inf_structure().procname,
-            "bits": 64 if idaapi.inf_is_64bit() else 32,
-            "base_addr": hex(idaapi.get_imagebase()),
+            "processor": processor,
+            "bits": bits,
+            "base_addr": base_addr,
         }
 
         if LEGACY_MODE:
