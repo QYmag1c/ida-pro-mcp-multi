@@ -249,6 +249,10 @@ def check_instance_health(
 # Request Proxy
 # ============================================================================
 
+# Instance management tool names
+INSTANCE_MANAGEMENT_TOOLS = ("list_instances", "switch_instance", "get_current_instance", "check_instance_health")
+
+
 def dispatch_proxy(request: dict | str | bytes | bytearray) -> JsonRpcResponse | None:
     """Dispatch JSON-RPC requests to the Gateway/IDA instance"""
     if not isinstance(request, dict):
@@ -262,13 +266,18 @@ def dispatch_proxy(request: dict | str | bytes | bytearray) -> JsonRpcResponse |
     elif request_obj["method"].startswith("notifications/"):
         return dispatch_original(request)
     
-    # Handle instance management tools locally
     method = request_obj["method"]
+    
+    # Handle tools/list - merge local and remote tools
+    if method == "tools/list":
+        return _handle_tools_list(request_obj)
+    
+    # Handle instance management tools locally
     if method == "tools/call":
         params = request_obj.get("params")
         if isinstance(params, dict):
             tool_name = params.get("name", "")
-            if tool_name in ("list_instances", "switch_instance", "get_current_instance", "check_instance_health"):
+            if tool_name in INSTANCE_MANAGEMENT_TOOLS:
                 # These are handled by our local MCP server
                 return dispatch_original(request)
 
@@ -306,6 +315,55 @@ def dispatch_proxy(request: dict | str | bytes | bytearray) -> JsonRpcResponse |
         )
     finally:
         conn.close()
+
+
+def _handle_tools_list(request_obj: dict) -> JsonRpcResponse:
+    """Handle tools/list by merging local instance management tools with remote IDA tools"""
+    request_id = request_obj.get("id")
+    
+    # Get local tools (instance management)
+    local_response = dispatch_original(request_obj)
+    local_tools = []
+    if local_response and "result" in local_response:
+        local_tools = local_response["result"].get("tools", [])
+    
+    # Try to get remote tools from Gateway
+    remote_tools = []
+    try:
+        conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=10)
+        conn.request("POST", "/mcp", json.dumps(request_obj), {"Content-Type": "application/json"})
+        response = conn.getresponse()
+        data = json.loads(response.read().decode())
+        conn.close()
+        
+        if "result" in data:
+            remote_tools = data["result"].get("tools", [])
+    except Exception as e:
+        # Gateway not available - return only local tools with a hint
+        pass
+    
+    # Merge tools (local tools first, then remote)
+    # Remove duplicates by name
+    seen_names = set()
+    merged_tools = []
+    
+    for tool in local_tools:
+        name = tool.get("name", "")
+        if name and name not in seen_names:
+            seen_names.add(name)
+            merged_tools.append(tool)
+    
+    for tool in remote_tools:
+        name = tool.get("name", "")
+        if name and name not in seen_names:
+            seen_names.add(name)
+            merged_tools.append(tool)
+    
+    return JsonRpcResponse({
+        "jsonrpc": "2.0",
+        "result": {"tools": merged_tools},
+        "id": request_id,
+    })
 
 
 mcp.registry.dispatch = dispatch_proxy
