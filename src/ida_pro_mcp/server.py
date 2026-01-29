@@ -245,12 +245,116 @@ def check_instance_health(
         return {"error": f"Failed to check instance health: {e}"}
 
 
+@mcp.tool
+def open_library(
+    name: Annotated[str, "Library name or path to open (e.g., 'helper.dll', 'crypto.so')"],
+    search_dir: Annotated[Optional[str], "Directory to search for the library (default: current binary's directory)"] = None,
+    ida_path: Annotated[Optional[str], "Path to IDA executable (auto-detected if not specified)"] = None,
+) -> dict:
+    """Open a library file in a new IDA Pro instance with MCP auto-started
+    
+    Searches for the specified library in the current directory and subdirectories,
+    then opens it in IDA Pro with automatic analysis and MCP plugin startup.
+    This is useful when analyzing a program that uses external libraries.
+    
+    The library will be opened in autonomous mode (-A flag) to skip all dialogs,
+    and the architecture will be auto-detected from the file header.
+    
+    Args:
+        name: Library name (e.g., 'helper.dll') or full path
+        search_dir: Directory to search (default: directory of current binary)
+        ida_path: Path to IDA executable (optional, auto-detected)
+    
+    Returns:
+        Dictionary with:
+        - success: Whether IDA was started
+        - library_path: Full path to the library
+        - architecture: Detected architecture (e.g., 'metapc 64-bit')
+        - message: Status message
+    """
+    try:
+        # Import the library opener module
+        from . import library_opener
+    except ImportError:
+        # Try relative import for when running as script
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "library_opener",
+            os.path.join(os.path.dirname(__file__), "library_opener.py")
+        )
+        library_opener = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(library_opener)
+    
+    # Determine search directory
+    if search_dir is None:
+        # Try to get current binary's directory from the current IDA instance
+        try:
+            conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=5)
+            conn.request("GET", "/gateway/instances")
+            response = conn.getresponse()
+            data = json.loads(response.read())
+            conn.close()
+            
+            current_id = data.get("current_instance_id")
+            for inst in data.get("instances", []):
+                if inst["instance_id"] == current_id:
+                    binary_path = inst.get("binary_path", "")
+                    if binary_path:
+                        search_dir = os.path.dirname(binary_path)
+                    break
+        except Exception:
+            pass
+        
+        if search_dir is None:
+            search_dir = "."
+    
+    # Check if name is already a full path
+    if os.path.exists(name):
+        library_path = os.path.abspath(name)
+    else:
+        # Search for the library
+        library_path = library_opener.find_library(name, [search_dir])
+        if library_path is None:
+            return {
+                "success": False,
+                "error": f"Library not found: {name}",
+                "search_dir": search_dir,
+                "hint": "Try specifying the full path or a different search directory"
+            }
+    
+    # Detect architecture
+    processor, bitness = library_opener.detect_architecture(library_path)
+    
+    # Open in IDA
+    success = library_opener.open_library_in_ida(
+        library_path,
+        ida_path=ida_path,
+        auto_start_mcp=True,
+    )
+    
+    if success:
+        return {
+            "success": True,
+            "library_path": library_path,
+            "architecture": f"{processor} {bitness}-bit",
+            "message": f"Opening {os.path.basename(library_path)} in IDA Pro. It will register with the Gateway once loaded.",
+            "hint": "Use list_instances() to see when the new instance is ready"
+        }
+    else:
+        return {
+            "success": False,
+            "library_path": library_path,
+            "error": "Failed to start IDA Pro",
+            "hint": "Check if IDA Pro is installed and accessible"
+        }
+
+
 # ============================================================================
 # Request Proxy
 # ============================================================================
 
-# Instance management tool names
-INSTANCE_MANAGEMENT_TOOLS = ("list_instances", "switch_instance", "get_current_instance", "check_instance_health")
+# Instance management tool names (including open_library)
+INSTANCE_MANAGEMENT_TOOLS = ("list_instances", "switch_instance", "get_current_instance", "check_instance_health", "open_library")
 
 
 def dispatch_proxy(request: dict | str | bytes | bytearray) -> JsonRpcResponse | None:

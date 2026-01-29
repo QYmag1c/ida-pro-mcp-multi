@@ -1,0 +1,308 @@
+"""IDA Pro MCP Library Opener
+
+This module provides functionality to automatically open library files in IDA Pro
+and start the MCP plugin without user interaction.
+
+Usage:
+    This script is called by IDA with -S parameter to auto-start MCP after loading.
+"""
+
+import os
+import sys
+import glob
+import subprocess
+import tempfile
+from typing import Optional, List, Tuple
+
+# Common processor types for IDA
+PROCESSOR_TYPES = {
+    # Windows PE
+    ".dll": "metapc",
+    ".exe": "metapc",
+    ".sys": "metapc",
+    # Linux ELF
+    ".so": "metapc",  # Usually x86/x64, but could be ARM
+    # macOS
+    ".dylib": "metapc",
+    # Generic
+    ".bin": "metapc",
+}
+
+# Architecture detection based on file header
+def detect_architecture(filepath: str) -> Tuple[str, int]:
+    """Detect the architecture of a binary file.
+    
+    Returns:
+        Tuple of (processor_type, bitness)
+        processor_type: IDA processor name (metapc, arm, mips, etc.)
+        bitness: 32 or 64
+    """
+    try:
+        with open(filepath, 'rb') as f:
+            header = f.read(64)
+        
+        # Check for PE (Windows)
+        if header[:2] == b'MZ':
+            # Read PE header offset
+            pe_offset = int.from_bytes(header[0x3C:0x40], 'little')
+            f = open(filepath, 'rb')
+            f.seek(pe_offset)
+            pe_sig = f.read(4)
+            if pe_sig == b'PE\x00\x00':
+                machine = int.from_bytes(f.read(2), 'little')
+                f.close()
+                # Machine types
+                if machine == 0x8664:  # AMD64
+                    return ("metapc", 64)
+                elif machine == 0x14c:  # i386
+                    return ("metapc", 32)
+                elif machine == 0xaa64:  # ARM64
+                    return ("arm", 64)
+                elif machine == 0x1c0:  # ARM
+                    return ("arm", 32)
+            f.close()
+        
+        # Check for ELF (Linux/Unix)
+        elif header[:4] == b'\x7fELF':
+            elf_class = header[4]  # 1 = 32-bit, 2 = 64-bit
+            machine = int.from_bytes(header[18:20], 'little')
+            bitness = 64 if elf_class == 2 else 32
+            
+            # Machine types
+            if machine == 0x3E:  # x86-64
+                return ("metapc", 64)
+            elif machine == 0x03:  # x86
+                return ("metapc", 32)
+            elif machine == 0xB7:  # AArch64
+                return ("arm", 64)
+            elif machine == 0x28:  # ARM
+                return ("arm", 32)
+            elif machine == 0x08:  # MIPS
+                return ("mips", bitness)
+        
+        # Check for Mach-O (macOS)
+        elif header[:4] in (b'\xfe\xed\xfa\xce', b'\xce\xfa\xed\xfe',  # 32-bit
+                            b'\xfe\xed\xfa\xcf', b'\xcf\xfa\xed\xfe'):  # 64-bit
+            is_64 = header[:4] in (b'\xfe\xed\xfa\xcf', b'\xcf\xfa\xed\xfe')
+            # CPU type is at offset 4
+            cpu_type = int.from_bytes(header[4:8], 'little')
+            if cpu_type & 0x1000000:  # 64-bit flag
+                is_64 = True
+            cpu_type &= 0xFFFFFF
+            
+            if cpu_type == 7:  # x86
+                return ("metapc", 64 if is_64 else 32)
+            elif cpu_type == 12:  # ARM
+                return ("arm", 64 if is_64 else 32)
+        
+    except Exception:
+        pass
+    
+    # Default to x64
+    return ("metapc", 64)
+
+
+def find_library(name: str, search_dirs: Optional[List[str]] = None) -> Optional[str]:
+    """Search for a library file in the given directories.
+    
+    Args:
+        name: Library name (with or without extension)
+        search_dirs: List of directories to search (default: current dir and subdirs)
+    
+    Returns:
+        Full path to the library file, or None if not found
+    """
+    if search_dirs is None:
+        search_dirs = ["."]
+    
+    # Common library extensions
+    extensions = ["", ".dll", ".so", ".dylib", ".exe", ".sys"]
+    
+    for search_dir in search_dirs:
+        # Search in directory and subdirectories
+        for root, dirs, files in os.walk(search_dir):
+            for ext in extensions:
+                target = name + ext if not name.endswith(ext) else name
+                target_lower = target.lower()
+                
+                for f in files:
+                    if f.lower() == target_lower:
+                        return os.path.join(root, f)
+    
+    return None
+
+
+def get_ida_path() -> Optional[str]:
+    """Get the path to IDA Pro executable."""
+    # Try common locations
+    if sys.platform == 'win32':
+        common_paths = [
+            os.path.join(os.environ.get('PROGRAMFILES', ''), 'IDA Pro *', 'ida64.exe'),
+            os.path.join(os.environ.get('PROGRAMFILES(X86)', ''), 'IDA Pro *', 'ida64.exe'),
+            r"C:\Program Files\IDA Pro *\ida64.exe",
+            r"D:\*\IDA*\ida64.exe",
+        ]
+        for pattern in common_paths:
+            matches = glob.glob(pattern)
+            if matches:
+                return matches[0]
+    else:
+        # Linux/macOS
+        common_paths = [
+            "/opt/ida*/ida64",
+            "/usr/local/ida*/ida64",
+            os.path.expanduser("~/ida*/ida64"),
+        ]
+        for pattern in common_paths:
+            matches = glob.glob(pattern)
+            if matches:
+                return matches[0]
+    
+    return None
+
+
+def create_autostart_script() -> str:
+    """Create a temporary IDAPython script that auto-starts MCP.
+    
+    Returns:
+        Path to the temporary script file
+    """
+    script_content = '''
+# Auto-start MCP plugin after IDA loads the binary
+import idaapi
+import ida_auto
+
+def start_mcp():
+    """Start MCP plugin after auto-analysis completes."""
+    # Wait for auto-analysis to complete
+    ida_auto.auto_wait()
+    
+    # Run MCP plugin
+    idaapi.run_plugin("MCP", 0)
+    print("[MCP] Auto-started by library opener")
+
+# Register callback to run after database is ready
+class MCPAutoStarter(idaapi.UI_Hooks):
+    def ready_to_run(self):
+        start_mcp()
+        return 0
+
+hooks = MCPAutoStarter()
+hooks.hook()
+'''
+    
+    # Create temp file
+    fd, path = tempfile.mkstemp(suffix='.py', prefix='ida_mcp_autostart_')
+    with os.fdopen(fd, 'w') as f:
+        f.write(script_content)
+    
+    return path
+
+
+def open_library_in_ida(
+    library_path: str,
+    ida_path: Optional[str] = None,
+    auto_start_mcp: bool = True,
+) -> bool:
+    """Open a library file in IDA Pro with automatic analysis.
+    
+    Args:
+        library_path: Path to the library file
+        ida_path: Path to IDA executable (auto-detected if None)
+        auto_start_mcp: Whether to auto-start MCP plugin
+    
+    Returns:
+        True if IDA was started successfully
+    """
+    if not os.path.exists(library_path):
+        print(f"[MCP] Library not found: {library_path}")
+        return False
+    
+    # Get IDA path
+    if ida_path is None:
+        ida_path = get_ida_path()
+        if ida_path is None:
+            print("[MCP] IDA Pro not found. Please specify the path.")
+            return False
+    
+    # Detect architecture
+    processor, bitness = detect_architecture(library_path)
+    
+    # Choose ida or ida64 based on bitness
+    if bitness == 32 and ida_path.endswith('64.exe'):
+        ida_path = ida_path.replace('ida64.exe', 'ida.exe')
+    elif bitness == 64 and ida_path.endswith('ida.exe') and not ida_path.endswith('ida64.exe'):
+        ida_path = ida_path.replace('ida.exe', 'ida64.exe')
+    
+    # Build command line
+    cmd = [
+        ida_path,
+        "-A",  # Autonomous mode - no dialogs
+        f"-T{processor}",  # Processor type
+    ]
+    
+    # Add auto-start script if requested
+    autostart_script = None
+    if auto_start_mcp:
+        autostart_script = create_autostart_script()
+        cmd.append(f"-S{autostart_script}")
+    
+    # Add the library path
+    cmd.append(os.path.abspath(library_path))
+    
+    print(f"[MCP] Opening library: {library_path}")
+    print(f"[MCP] Architecture: {processor} {bitness}-bit")
+    print(f"[MCP] Command: {' '.join(cmd)}")
+    
+    try:
+        # Start IDA in background
+        if sys.platform == 'win32':
+            CREATE_NEW_PROCESS_GROUP = 0x00000200
+            DETACHED_PROCESS = 0x00000008
+            subprocess.Popen(
+                cmd,
+                creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
+                close_fds=True,
+            )
+        else:
+            subprocess.Popen(
+                cmd,
+                start_new_session=True,
+                close_fds=True,
+            )
+        
+        return True
+    except Exception as e:
+        print(f"[MCP] Failed to start IDA: {e}")
+        return False
+
+
+# For command-line usage
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Open library in IDA Pro with MCP")
+    parser.add_argument("library", help="Library file path or name to search")
+    parser.add_argument("--search-dir", "-d", action="append", help="Directory to search")
+    parser.add_argument("--ida-path", "-i", help="Path to IDA executable")
+    parser.add_argument("--no-mcp", action="store_true", help="Don't auto-start MCP")
+    
+    args = parser.parse_args()
+    
+    # Find library if not a direct path
+    if os.path.exists(args.library):
+        library_path = args.library
+    else:
+        library_path = find_library(args.library, args.search_dir)
+        if library_path is None:
+            print(f"Library not found: {args.library}")
+            sys.exit(1)
+    
+    # Open in IDA
+    success = open_library_in_ida(
+        library_path,
+        ida_path=args.ida_path,
+        auto_start_mcp=not args.no_mcp,
+    )
+    
+    sys.exit(0 if success else 1)

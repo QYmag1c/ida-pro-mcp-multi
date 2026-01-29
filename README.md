@@ -49,6 +49,15 @@ AI Client ──MCP──> Gateway (port 13337) ──> IDA Instance 1 (main.exe
 | `switch_instance(target)` | Switch the default target instance (by ID or binary name) |
 | `get_current_instance()` | Get info about the current default instance |
 | `check_instance_health(target)` | Check if an instance is responding |
+| `open_library(name)` | Auto-search and open a library file in a new IDA instance |
+
+**Auto-Open Library:**
+
+When analyzing a program that uses external libraries, you can ask AI to open them automatically:
+- Searches the current directory and subdirectories for the library file
+- Auto-detects architecture (x86/x64/ARM)
+- Opens in IDA Pro with automatic analysis (no dialogs)
+- MCP plugin starts automatically after loading
 
 **Targeting Specific Instances:**
 

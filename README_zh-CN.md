@@ -49,6 +49,15 @@ AI 客户端 ──MCP──> 网关 (端口 13337) ──> IDA 实例 1 (main.e
 | `switch_instance(target)` | 切换默认目标实例（通过 ID 或二进制文件名） |
 | `get_current_instance()` | 获取当前默认实例的信息 |
 | `check_instance_health(target)` | 检查实例是否响应 |
+| `open_library(name)` | 自动搜索并在新 IDA 实例中打开链接库 |
+
+**自动打开链接库：**
+
+当分析的程序使用外部链接库时，可以让 AI 自动打开它们：
+- 自动搜索当前目录及子目录中的链接库文件
+- 自动检测架构（x86/x64/ARM）
+- 在 IDA Pro 中自动分析（无需手动点击对话框）
+- 加载完成后自动启动 MCP 插件
 
 **指定特定实例：**
 
