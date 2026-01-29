@@ -112,6 +112,30 @@ AI-assisted vulnerability scanning to identify potentially dangerous function ca
 
 ## Installation
 
+### For Users Who Have Installed the Original ida-pro-mcp
+
+If you have previously installed the original [ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp), you need to uninstall it first and then force reinstall:
+
+```bash
+# Uninstall old versions
+"D:\your\path\to\ida\python311\python.exe" -m pip uninstall -y ida-pro-mcp ida-pro-mcp-multi
+
+# Force reinstall the new version
+"D:\your\path\to\ida\python311\python.exe" -m pip install --no-cache-dir --force-reinstall --upgrade git+https://github.com/QYmag1c/ida-pro-mcp-multi
+
+# Reinstall IDA plugin and configure MCP clients
+"D:\your\path\to\ida\python311\Scripts\ida-pro-mcp.exe" --install
+
+# View MCP configuration
+"D:\your\path\to\ida\python311\Scripts\ida-pro-mcp.exe" --config
+```
+
+Then restart IDA Pro and your MCP client.
+
+---
+
+### Fresh Installation
+
 ### Step 1: Set Environment Variable
 
 Add IDA's Python `site-packages` directory to your environment variables:
@@ -141,7 +165,7 @@ python.exe -m pip install --upgrade git+https://github.com/QYmag1c/ida-pro-mcp-m
 # Install IDA plugin and configure MCP clients
 "D:\your\path\to\ida\python311\Scripts\ida-pro-mcp.exe" --install
 
-# (Optional) View MCP configuration for manual setup
+# View MCP configuration for manual setup
 "D:\your\path\to\ida\python311\Scripts\ida-pro-mcp.exe" --config
 ```
 

@@ -112,6 +112,30 @@ AI 辅助漏洞扫描，识别潜在危险的函数调用：
 
 ## 安装
 
+### 已安装过原版 ida-pro-mcp 的用户
+
+如果你之前安装过原版 [ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp)，需要先卸载再强制重新安装：
+
+```bash
+# 卸载旧版本
+"D:\你的路径\ida\python311\python.exe" -m pip uninstall -y ida-pro-mcp ida-pro-mcp-multi
+
+# 强制重新安装新版本
+"D:\你的路径\ida\python311\python.exe" -m pip install --no-cache-dir --force-reinstall --upgrade git+https://github.com/QYmag1c/ida-pro-mcp-multi
+
+# 重新安装 IDA 插件并配置 MCP 客户端
+"D:\你的路径\ida\python311\Scripts\ida-pro-mcp.exe" --install
+
+# 查看 MCP 配置
+"D:\你的路径\ida\python311\Scripts\ida-pro-mcp.exe" --config
+```
+
+然后重启 IDA Pro 和你的 MCP 客户端。
+
+---
+
+### 全新安装
+
 ### 步骤 1：设置环境变量
 
 将 IDA 的 Python `site-packages` 目录添加到环境变量：
@@ -141,7 +165,7 @@ python.exe -m pip install --upgrade git+https://github.com/QYmag1c/ida-pro-mcp-m
 # 安装 IDA 插件并配置 MCP 客户端
 "D:\你的路径\ida\python311\Scripts\ida-pro-mcp.exe" --install
 
-# （可选）查看 MCP 配置以进行手动设置
+# 查看 MCP 配置以进行手动设置
 "D:\你的路径\ida\python311\Scripts\ida-pro-mcp.exe" --config
 ```
 
