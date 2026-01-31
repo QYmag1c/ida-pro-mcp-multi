@@ -274,6 +274,8 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
             self._handle_register(body)
         elif path == "/gateway/unregister":
             self._handle_unregister(body)
+        elif path == "/gateway/switch":
+            self._handle_switch(body)
         elif path == "/mcp":
             self._handle_mcp_request(body)
         elif path == "/sse":
@@ -326,6 +328,46 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
                 self.send_error_response(404, f"Instance not found: {instance_id}")
         except Exception as e:
             logger.error(f"Unregistration failed: {e}")
+            self.send_error_response(500, str(e))
+    
+    def _handle_switch(self, body: bytes):
+        """Handle switching the current default instance"""
+        try:
+            data = json.loads(body)
+            target = data.get("target")
+            
+            if not target:
+                self.send_error_response(400, "Missing target parameter")
+                return
+            
+            # Try to find by ID first, then by name
+            instance = registry.get(target) or registry.get_by_name(target)
+            if not instance:
+                self.send_json_response(200, {
+                    "success": False,
+                    "error": f"Instance not found: {target}",
+                    "available_instances": [
+                        {"id": inst["instance_id"], "binary": inst["binary_name"]}
+                        for inst in registry.list_all()
+                    ]
+                })
+                return
+            
+            # Set as current instance
+            if registry.set_current(instance.instance_id):
+                logger.info(f"Switched current instance to: {instance.instance_id} ({instance.binary_name})")
+                self.send_json_response(200, {
+                    "success": True,
+                    "message": f"Switched to instance '{instance.instance_id}' ({instance.binary_name})",
+                    "instance": instance.to_dict()
+                })
+            else:
+                self.send_json_response(200, {
+                    "success": False,
+                    "error": f"Failed to switch to instance: {target}"
+                })
+        except Exception as e:
+            logger.error(f"Switch failed: {e}")
             self.send_error_response(500, str(e))
     
     def _handle_list_instances(self):

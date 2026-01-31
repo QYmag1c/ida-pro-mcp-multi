@@ -81,41 +81,15 @@ def switch_instance(
         Dictionary with success status and current instance info
     """
     try:
-        # First, get the list of instances to find the target
+        # Call Gateway's switch endpoint to change the current instance
         conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=5)
-        conn.request("GET", "/gateway/instances")
+        switch_request = json.dumps({"target": target})
+        conn.request("POST", "/gateway/switch", switch_request, {"Content-Type": "application/json"})
         response = conn.getresponse()
         data = json.loads(response.read())
         conn.close()
         
-        if "error" in data:
-            return data
-        
-        instances = data.get("instances", [])
-        
-        # Find matching instance
-        target_instance = None
-        for inst in instances:
-            if inst["instance_id"] == target or inst["binary_name"] == target:
-                target_instance = inst
-                break
-        
-        if not target_instance:
-            return {
-                "error": f"Instance not found: {target}",
-                "available_instances": [
-                    {"id": i["instance_id"], "binary": i["binary_name"]}
-                    for i in instances
-                ]
-            }
-        
-        # The Gateway handles switching via the target parameter in requests
-        # We just need to update the local state
-        return {
-            "success": True,
-            "message": f"Switched to instance '{target_instance['instance_id']}' ({target_instance['binary_name']})",
-            "instance": target_instance
-        }
+        return data
     except Exception as e:
         return {"error": f"Failed to switch instance: {e}"}
 
