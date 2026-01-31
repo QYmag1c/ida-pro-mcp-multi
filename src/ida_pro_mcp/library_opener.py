@@ -171,13 +171,10 @@ def create_autostart_script(script_dir: Optional[str] = None) -> str:
         Path to the temporary script file
     """
     # Note: The script runs with -S parameter
-    # In IDA 9.x with -A flag, the script runs after the database is created
-    # We use a simple approach: wait for analysis and then start MCP
+    # IMPORTANT: ida_auto.auto_wait() must be called from the main thread!
+    # We use execute_sync to ensure all IDA API calls run in the main thread
     script_content = '''# Auto-start MCP plugin after IDA loads the binary
 # This script is executed via IDA's -S parameter
-import sys
-import time
-
 print("[MCP AutoStart] Script starting...")
 
 try:
@@ -187,39 +184,36 @@ try:
     
     print("[MCP AutoStart] IDA modules imported successfully")
     
-    # Check if we're in GUI mode
-    if idaapi.is_msg_inited():
-        print("[MCP AutoStart] IDA message system initialized")
-    
-    def delayed_start():
-        """Start MCP after a delay to ensure everything is loaded."""
+    def start_mcp_in_main_thread():
+        """Start MCP plugin - must run in main thread."""
         print("[MCP AutoStart] Waiting for auto-analysis to complete...")
         
-        # Wait for auto-analysis
+        # Wait for auto-analysis (must be in main thread)
         ida_auto.auto_wait()
         print("[MCP AutoStart] Auto-analysis complete")
-        
-        # Small delay to ensure UI is ready
-        time.sleep(1)
         
         # Try to run MCP plugin
         print("[MCP AutoStart] Attempting to start MCP plugin...")
         try:
-            # Method 1: Try run_plugin
+            # Method 1: Try run_plugin by name
             result = idaapi.run_plugin("MCP", 0)
-            print(f"[MCP AutoStart] run_plugin returned: {result}")
+            print(f"[MCP AutoStart] run_plugin('MCP', 0) returned: {result}")
             
             if not result:
                 # Method 2: Try loading plugin directly
-                print("[MCP AutoStart] Trying alternative method...")
+                print("[MCP AutoStart] Trying load_plugin method...")
                 plugin = idaapi.load_plugin("ida_mcp")
                 if plugin:
-                    idaapi.run_plugin(plugin, 0)
-                    print("[MCP AutoStart] Plugin loaded and run via load_plugin")
+                    result = idaapi.run_plugin(plugin, 0)
+                    print(f"[MCP AutoStart] run_plugin(plugin, 0) returned: {result}")
+                else:
+                    print("[MCP AutoStart] load_plugin returned None")
         except Exception as e:
             print(f"[MCP AutoStart] Error starting MCP: {e}")
             import traceback
             traceback.print_exc()
+        
+        return 1  # Return value for execute_sync
     
     # Use UI_Hooks for reliable startup
     class MCPStarter(idaapi.UI_Hooks):
@@ -230,12 +224,10 @@ try:
         def ready_to_run(self):
             if not self.done:
                 self.done = True
-                print("[MCP AutoStart] ready_to_run called, starting MCP...")
-                # Run in a separate thread to avoid blocking
-                import threading
-                t = threading.Thread(target=delayed_start)
-                t.daemon = True
-                t.start()
+                print("[MCP AutoStart] ready_to_run called, scheduling MCP start...")
+                # Use execute_sync to run in the main thread
+                # MFF_WRITE allows database modifications
+                idaapi.execute_sync(start_mcp_in_main_thread, idaapi.MFF_WRITE)
             return 0
         
         def database_inited(self, is_new_database):
@@ -332,18 +324,12 @@ def open_library_in_ida(
     
     # Build command line
     # Note: IDA command line options:
-    # -A: Autonomous mode (no dialogs) - BUT this can cause loader issues!
+    # -A: Autonomous mode (no dialogs)
     # -B: Batch mode (implies -A, creates .idb and exits)
     # -c: Create new database (don't load existing .idb)
     # -p<processor>: Processor type (e.g., -pmetapc for x86)
     # -S<script>: Run script after loading
     # -L<logfile>: Log file
-    #
-    # IMPORTANT: In IDA 9.x, -A flag may cause the loader to not properly
-    # detect PE files. We'll try without -A first, which means IDA will
-    # show the loader dialog but should auto-select the correct loader.
-    #
-    # Alternative: Use -Lpe for PE files to force PE loader
     
     # Add auto-start script if requested
     autostart_script = None
@@ -364,9 +350,8 @@ def open_library_in_ida(
             DETACHED_PROCESS = 0x00000008
             
             # Build command list for Windows
-            # Don't use -A flag to allow proper loader detection
-            # IDA will show the loader dialog but should auto-select PE
-            cmd = [ida_path]
+            # Use -A for autonomous mode (no dialogs)
+            cmd = [ida_path, "-A"]
             
             # Add script if requested (must come before the file)
             if autostart_script:
@@ -388,7 +373,7 @@ def open_library_in_ida(
             )
         else:
             # Unix: build command list
-            cmd = [ida_path]
+            cmd = [ida_path, "-A"]
             if autostart_script:
                 cmd.append(f"-S{autostart_script}")
             cmd.append(library_abs_path)
