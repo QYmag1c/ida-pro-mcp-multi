@@ -71,6 +71,10 @@ _LOG_SKIP_METHODS = {
     for m in os.getenv("IDA_MCP_LOG_SKIP_METHODS", "tools/call").split(",")
     if m.strip()
 }
+
+# Known metadata parameters that AI clients may send but should be ignored
+# These are not part of the tool's actual parameters
+_IGNORED_PARAMS = {"reason", "_", "_meta", "__meta__"}
 JsonRpcParams: TypeAlias = dict[str, Any] | list[Any] | None
 
 class JsonRpcRequest(TypedDict):
@@ -240,6 +244,9 @@ class JsonRpcRegistry:
 
         # Validate dict params
         if isinstance(params, dict):
+            # Filter out known metadata parameters that AI clients may send
+            params = {k: v for k, v in params.items() if k not in _IGNORED_PARAMS}
+            
             # Check all required params are present
             missing = set(required_params) - set(params.keys())
             if missing:
