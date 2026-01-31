@@ -225,14 +225,41 @@ def open_library_in_ida(
             print("[MCP] IDA Pro not found. Please specify the path.")
             return False
     
+    # Verify IDA path exists
+    if not os.path.exists(ida_path):
+        print(f"[MCP] IDA executable not found at: {ida_path}")
+        return False
+    
     # Detect architecture
     processor, bitness = detect_architecture(library_path)
     
     # Choose ida or ida64 based on bitness
-    if bitness == 32 and ida_path.endswith('64.exe'):
-        ida_path = ida_path.replace('ida64.exe', 'ida.exe')
-    elif bitness == 64 and ida_path.endswith('ida.exe') and not ida_path.endswith('ida64.exe'):
-        ida_path = ida_path.replace('ida.exe', 'ida64.exe')
+    # Note: IDA 9.x uses a single executable that handles both 32-bit and 64-bit binaries
+    # So we only need to adjust for older IDA versions (8.x and earlier)
+    original_ida_path = ida_path
+    adjusted_ida_path = None
+    
+    if sys.platform == 'win32':
+        if bitness == 32 and ida_path.endswith('ida64.exe'):
+            adjusted_ida_path = ida_path.replace('ida64.exe', 'ida.exe')
+        elif bitness == 64 and ida_path.endswith('ida.exe') and not ida_path.endswith('ida64.exe'):
+            adjusted_ida_path = ida_path.replace('ida.exe', 'ida64.exe')
+    else:
+        # Linux/macOS
+        if bitness == 32 and ida_path.endswith('64'):
+            adjusted_ida_path = ida_path[:-2]  # Remove '64'
+        elif bitness == 64 and not ida_path.endswith('64'):
+            adjusted_ida_path = ida_path + '64'
+    
+    # Only use adjusted path if it exists, otherwise use original
+    # This handles IDA 9.x which uses a single executable
+    if adjusted_ida_path and os.path.exists(adjusted_ida_path):
+        ida_path = adjusted_ida_path
+        print(f"[MCP] Using adjusted IDA path for {bitness}-bit: {ida_path}")
+    else:
+        if adjusted_ida_path:
+            print(f"[MCP] Adjusted IDA path not found: {adjusted_ida_path}, using original: {original_ida_path}")
+        # Keep original ida_path
     
     # Build command line
     cmd = [
@@ -252,28 +279,37 @@ def open_library_in_ida(
     
     print(f"[MCP] Opening library: {library_path}")
     print(f"[MCP] Architecture: {processor} {bitness}-bit")
-    print(f"[MCP] Command: {' '.join(cmd)}")
+    print(f"[MCP] IDA path: {ida_path}")
+    print(f"[MCP] Command: {cmd}")
     
     try:
         # Start IDA in background
         if sys.platform == 'win32':
             CREATE_NEW_PROCESS_GROUP = 0x00000200
             DETACHED_PROCESS = 0x00000008
+            # On Windows, don't use close_fds=True as it can cause issues
             subprocess.Popen(
                 cmd,
                 creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
-                close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         else:
             subprocess.Popen(
                 cmd,
                 start_new_session=True,
                 close_fds=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         
         return True
     except Exception as e:
         print(f"[MCP] Failed to start IDA: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 

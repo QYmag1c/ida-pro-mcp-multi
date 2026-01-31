@@ -280,7 +280,10 @@ def open_library(
                 # Get IDA path from instance metadata
                 metadata = inst.get("metadata", {})
                 if metadata.get("ida_path"):
-                    current_instance_ida_path = metadata["ida_path"]
+                    ida_path_from_metadata = metadata["ida_path"]
+                    # Verify the path exists before using it
+                    if os.path.exists(ida_path_from_metadata):
+                        current_instance_ida_path = ida_path_from_metadata
                 break
     except Exception:
         pass
@@ -311,25 +314,41 @@ def open_library(
     processor, bitness = library_opener.detect_architecture(library_path)
     
     # Open in IDA
-    success = library_opener.open_library_in_ida(
-        library_path,
-        ida_path=ida_path,
-        auto_start_mcp=True,
-    )
-    
-    if success:
-        return {
-            "success": True,
-            "library_path": library_path,
-            "architecture": f"{processor} {bitness}-bit",
-            "message": f"Opening {os.path.basename(library_path)} in IDA Pro. It will register with the Gateway once loaded.",
-            "hint": "Use list_instances() to see when the new instance is ready"
-        }
-    else:
+    try:
+        success = library_opener.open_library_in_ida(
+            library_path,
+            ida_path=ida_path,
+            auto_start_mcp=True,
+        )
+        
+        if success:
+            return {
+                "success": True,
+                "library_path": library_path,
+                "architecture": f"{processor} {bitness}-bit",
+                "ida_path_used": ida_path,
+                "message": f"Opening {os.path.basename(library_path)} in IDA Pro. It will register with the Gateway once loaded.",
+                "hint": "Use list_instances() to see when the new instance is ready"
+            }
+        else:
+            # Check if ida_path exists
+            ida_exists = os.path.exists(ida_path) if ida_path else False
+            return {
+                "success": False,
+                "library_path": library_path,
+                "ida_path_attempted": ida_path,
+                "ida_path_exists": ida_exists,
+                "error": "Failed to start IDA Pro - check the logs for details",
+                "hint": "Check if IDA Pro is installed and accessible, or the ida_path in instance metadata is correct"
+            }
+    except Exception as e:
+        import traceback
         return {
             "success": False,
             "library_path": library_path,
-            "error": "Failed to start IDA Pro",
+            "ida_path_attempted": ida_path,
+            "error": f"Exception while starting IDA: {str(e)}",
+            "traceback": traceback.format_exc(),
             "hint": "Check if IDA Pro is installed and accessible"
         }
 
