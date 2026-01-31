@@ -167,35 +167,65 @@ def create_autostart_script() -> str:
     Returns:
         Path to the temporary script file
     """
-    script_content = '''
-# Auto-start MCP plugin after IDA loads the binary
+    # Note: The script runs with -S parameter, which means it runs BEFORE
+    # the database is fully loaded. We need to use UI_Hooks to wait for
+    # the database to be ready.
+    script_content = '''# Auto-start MCP plugin after IDA loads the binary
+# This script is executed via IDA's -S parameter
+
 import idaapi
 import ida_auto
+import idc
 
-def start_mcp():
+print("[MCP AutoStart] Script loaded")
+
+def start_mcp_plugin():
     """Start MCP plugin after auto-analysis completes."""
+    print("[MCP AutoStart] Waiting for auto-analysis...")
     # Wait for auto-analysis to complete
     ida_auto.auto_wait()
+    print("[MCP AutoStart] Auto-analysis complete, starting MCP plugin...")
     
-    # Run MCP plugin
-    idaapi.run_plugin("MCP", 0)
-    print("[MCP] Auto-started by library opener")
+    # Try to run MCP plugin
+    try:
+        result = idaapi.run_plugin("MCP", 0)
+        if result:
+            print("[MCP AutoStart] MCP plugin started successfully")
+        else:
+            print("[MCP AutoStart] MCP plugin returned False")
+    except Exception as e:
+        print(f"[MCP AutoStart] Failed to start MCP plugin: {e}")
 
-# Register callback to run after database is ready
 class MCPAutoStarter(idaapi.UI_Hooks):
+    """UI Hooks to start MCP after database is ready."""
+    
+    def __init__(self):
+        idaapi.UI_Hooks.__init__(self)
+        self.started = False
+    
     def ready_to_run(self):
-        start_mcp()
+        """Called when IDA UI is ready and database is loaded."""
+        if not self.started:
+            self.started = True
+            print("[MCP AutoStart] UI ready, scheduling MCP start...")
+            # Use execute_sync to run in the main thread
+            idaapi.execute_sync(start_mcp_plugin, idaapi.MFF_FAST)
         return 0
 
-hooks = MCPAutoStarter()
-hooks.hook()
+# Install hooks
+print("[MCP AutoStart] Installing UI hooks...")
+mcp_hooks = MCPAutoStarter()
+mcp_hooks.hook()
+print("[MCP AutoStart] UI hooks installed, waiting for database load...")
 '''
     
-    # Create temp file
+    # Create temp file in a location that IDA can access
+    # Use the system temp directory
     fd, path = tempfile.mkstemp(suffix='.py', prefix='ida_mcp_autostart_')
-    with os.fdopen(fd, 'w') as f:
+    with os.fdopen(fd, 'w', encoding='utf-8') as f:
         f.write(script_content)
     
+    print(f"[MCP] Created autostart script: {path}")
     return path
 
 
@@ -262,32 +292,44 @@ def open_library_in_ida(
         # Keep original ida_path
     
     # Build command line
-    cmd = [
-        ida_path,
-        "-A",  # Autonomous mode - no dialogs
-        f"-T{processor}",  # Processor type
-    ]
-    
+    # Note: IDA command line options:
+    # -A: Autonomous mode (no dialogs)
+    # -B: Batch mode (implies -A, creates .idb and exits)
+    # -c: Create new database (don't load existing .idb)
+    # -p<processor>: Processor type (e.g., -pmetapc for x86)
+    # -S<script>: Run script after loading
+    #
+    # For PE files, IDA auto-detects the processor, so we don't need -p
+    # The -T option is for text files, not binary processor type
     # Add auto-start script if requested
     autostart_script = None
     if auto_start_mcp:
         autostart_script = create_autostart_script()
-        cmd.append(f"-S{autostart_script}")
     
-    # Add the library path
-    cmd.append(os.path.abspath(library_path))
+    # Get absolute path for library
+    library_abs_path = os.path.abspath(library_path)
     
     print(f"[MCP] Opening library: {library_path}")
     print(f"[MCP] Architecture: {processor} {bitness}-bit")
     print(f"[MCP] IDA path: {ida_path}")
-    print(f"[MCP] Command: {cmd}")
     
     try:
         # Start IDA in background
         if sys.platform == 'win32':
             CREATE_NEW_PROCESS_GROUP = 0x00000200
             DETACHED_PROCESS = 0x00000008
-            # On Windows, don't use close_fds=True as it can cause issues
+            
+            # Build command list for Windows
+            # Note: On Windows, we need to handle paths with spaces carefully
+            cmd = [ida_path, "-A", "-c"]
+            if autostart_script:
+                # -S parameter: script path must be quoted if it contains spaces
+                cmd.append(f'-S"{autostart_script}"')
+            cmd.append(library_abs_path)
+            
+            print(f"[MCP] Command: {cmd}")
+            
+            # On Windows, use shell=False with proper quoting
             subprocess.Popen(
                 cmd,
                 creationflags=CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS,
@@ -296,6 +338,14 @@ def open_library_in_ida(
                 stderr=subprocess.DEVNULL,
             )
         else:
+            # Unix: build command list
+            cmd = [ida_path, "-A", "-c"]
+            if autostart_script:
+                cmd.append(f"-S{autostart_script}")
+            cmd.append(library_abs_path)
+            
+            print(f"[MCP] Command: {cmd}")
+            
             subprocess.Popen(
                 cmd,
                 start_new_session=True,
