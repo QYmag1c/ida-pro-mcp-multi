@@ -284,10 +284,14 @@ class MCP(idaapi.plugin_t):
         except AttributeError:
             base_addr = "0x0"
         
+        # Get IDA executable path
+        ida_exe_path = sys.executable  # In IDA, this points to ida.exe or ida64.exe
+        
         metadata = {
             "processor": processor,
             "bits": bits,
             "base_addr": base_addr,
+            "ida_path": ida_exe_path,
         }
 
         if LEGACY_MODE:

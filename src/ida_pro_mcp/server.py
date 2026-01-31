@@ -259,28 +259,39 @@ def open_library(
         library_opener = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(library_opener)
     
-    # Determine search directory
-    if search_dir is None:
-        # Try to get current binary's directory from the current IDA instance
-        try:
-            conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=5)
-            conn.request("GET", "/gateway/instances")
-            response = conn.getresponse()
-            data = json.loads(response.read())
-            conn.close()
-            
-            current_id = data.get("current_instance_id")
-            for inst in data.get("instances", []):
-                if inst["instance_id"] == current_id:
+    # Try to get current instance info (for search_dir and ida_path)
+    current_instance_ida_path = None
+    try:
+        conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=5)
+        conn.request("GET", "/gateway/instances")
+        response = conn.getresponse()
+        data = json.loads(response.read())
+        conn.close()
+        
+        current_id = data.get("current_instance_id")
+        for inst in data.get("instances", []):
+            if inst["instance_id"] == current_id:
+                # Get search directory from binary path
+                if search_dir is None:
                     binary_path = inst.get("binary_path", "")
                     if binary_path:
                         search_dir = os.path.dirname(binary_path)
-                    break
-        except Exception:
-            pass
-        
-        if search_dir is None:
-            search_dir = "."
+                
+                # Get IDA path from instance metadata
+                metadata = inst.get("metadata", {})
+                if metadata.get("ida_path"):
+                    current_instance_ida_path = metadata["ida_path"]
+                break
+    except Exception:
+        pass
+    
+    # Use search_dir default if not found
+    if search_dir is None:
+        search_dir = "."
+    
+    # Use current instance's IDA path if not explicitly specified
+    if ida_path is None and current_instance_ida_path:
+        ida_path = current_instance_ida_path
     
     # Check if name is already a full path
     if os.path.exists(name):
