@@ -395,11 +395,28 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
             request = json.loads(body)
             target = None
             
-            # Check if this is a tools/call with target parameter
+            # Instance management tools that should be handled by Gateway, not forwarded
+            INSTANCE_MANAGEMENT_TOOLS = (
+                "list_instances",
+                "switch_instance",
+                "get_current_instance",
+                "check_instance_health",
+                "open_library",
+            )
+            
+            # Check if this is a tools/call request
             if request.get("method") == "tools/call":
                 params = request.get("params", {})
                 if isinstance(params, dict):
+                    tool_name = params.get("name", "")
                     arguments = params.get("arguments", {})
+                    
+                    # Handle instance management tools locally
+                    if tool_name in INSTANCE_MANAGEMENT_TOOLS:
+                        self._handle_instance_management_tool(request, tool_name, arguments)
+                        return
+                    
+                    # For other tools, extract target parameter for routing
                     if isinstance(arguments, dict):
                         target = arguments.pop("target", None)
                         # Update the request with modified arguments
@@ -429,6 +446,246 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logger.error(f"MCP request failed: {e}")
             self.send_error_response(500, str(e))
+    
+    def _handle_instance_management_tool(self, request: dict, tool_name: str, arguments: dict):
+        """Handle instance management tools locally in Gateway"""
+        request_id = request.get("id")
+        
+        try:
+            if tool_name == "list_instances":
+                result = self._tool_list_instances()
+            elif tool_name == "switch_instance":
+                target = arguments.get("target")
+                if not target:
+                    self._send_mcp_error(request_id, "Missing required parameter: target")
+                    return
+                result = self._tool_switch_instance(target)
+            elif tool_name == "get_current_instance":
+                result = self._tool_get_current_instance()
+            elif tool_name == "check_instance_health":
+                target = arguments.get("target")
+                result = self._tool_check_instance_health(target)
+            elif tool_name == "open_library":
+                name = arguments.get("name")
+                if not name:
+                    self._send_mcp_error(request_id, "Missing required parameter: name")
+                    return
+                search_dir = arguments.get("search_dir")
+                ida_path = arguments.get("ida_path")
+                result = self._tool_open_library(name, search_dir, ida_path)
+            else:
+                self._send_mcp_error(request_id, f"Unknown instance management tool: {tool_name}")
+                return
+            
+            # Send successful response
+            self.send_json_response(200, {
+                "jsonrpc": "2.0",
+                "result": {"content": [{"type": "text", "text": json.dumps(result, indent=2)}]},
+                "id": request_id,
+            })
+        except Exception as e:
+            logger.error(f"Instance management tool {tool_name} failed: {e}")
+            self._send_mcp_error(request_id, str(e))
+    
+    def _tool_list_instances(self) -> dict:
+        """List all registered IDA instances"""
+        instances = registry.list_all()
+        current = registry.get_current()
+        return {
+            "instances": instances,
+            "count": len(instances),
+            "current_instance_id": current.instance_id if current else None,
+        }
+    
+    def _tool_switch_instance(self, target: str) -> dict:
+        """Switch the current default instance"""
+        # Try to find by ID first, then by name
+        instance = registry.get(target) or registry.get_by_name(target)
+        if not instance:
+            return {
+                "success": False,
+                "error": f"Instance not found: {target}",
+                "available_instances": [
+                    {"id": inst["instance_id"], "binary": inst["binary_name"]}
+                    for inst in registry.list_all()
+                ]
+            }
+        
+        # Set as current instance
+        if registry.set_current(instance.instance_id):
+            logger.info(f"Switched current instance to: {instance.instance_id} ({instance.binary_name})")
+            return {
+                "success": True,
+                "message": f"Switched to instance '{instance.instance_id}' ({instance.binary_name})",
+                "instance": instance.to_dict()
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"Failed to switch to instance: {target}"
+            }
+    
+    def _tool_get_current_instance(self) -> dict:
+        """Get information about the current default instance"""
+        current = registry.get_current()
+        if not current:
+            return {"error": "No IDA instance available"}
+        
+        return {
+            "instance": {**current.to_dict(), "is_current": True},
+            "total_instances": registry.count()
+        }
+    
+    def _tool_check_instance_health(self, target: Optional[str] = None) -> dict:
+        """Check if an IDA instance is responding"""
+        import time
+        
+        # Find target instance
+        if target:
+            instance = registry.get(target) or registry.get_by_name(target)
+            if not instance:
+                return {"error": f"Instance not found: {target}"}
+        else:
+            instance = registry.get_current()
+            if not instance:
+                return {"error": "No current instance available"}
+        
+        # Ping the instance directly
+        start_time = time.time()
+        try:
+            ping_conn = http.client.HTTPConnection(
+                GATEWAY_HOST, instance.port, timeout=5
+            )
+            ping_request = json.dumps({
+                "jsonrpc": "2.0",
+                "method": "ping",
+                "params": {},
+                "id": 1
+            })
+            ping_conn.request("POST", "/mcp", ping_request, {"Content-Type": "application/json"})
+            ping_response = ping_conn.getresponse()
+            ping_data = json.loads(ping_response.read())
+            ping_conn.close()
+            
+            elapsed = (time.time() - start_time) * 1000  # ms
+            
+            if "error" in ping_data:
+                return {
+                    "healthy": False,
+                    "instance": instance.to_dict(),
+                    "error": ping_data["error"]
+                }
+            
+            return {
+                "healthy": True,
+                "instance": instance.to_dict(),
+                "response_time_ms": round(elapsed, 2)
+            }
+        except Exception as e:
+            return {
+                "healthy": False,
+                "instance": instance.to_dict(),
+                "error": str(e)
+            }
+    
+    def _tool_open_library(self, name: str, search_dir: Optional[str] = None, ida_path: Optional[str] = None) -> dict:
+        """Open a library file in a new IDA Pro instance"""
+        import os
+        
+        # Try to import library_opener
+        try:
+            from . import library_opener
+        except ImportError:
+            try:
+                import importlib.util
+                spec = importlib.util.spec_from_file_location(
+                    "library_opener",
+                    os.path.join(os.path.dirname(__file__), "library_opener.py")
+                )
+                library_opener = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(library_opener)
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Failed to import library_opener: {e}"
+                }
+        
+        # Get current instance info for search_dir and ida_path
+        current_instance_ida_path = None
+        current = registry.get_current()
+        if current:
+            if search_dir is None:
+                binary_path = current.binary_path
+                if binary_path:
+                    search_dir = os.path.dirname(binary_path)
+            
+            metadata = current.metadata
+            if metadata.get("ida_path"):
+                ida_path_from_metadata = metadata["ida_path"]
+                if os.path.exists(ida_path_from_metadata):
+                    current_instance_ida_path = ida_path_from_metadata
+        
+        # Use defaults
+        if search_dir is None:
+            search_dir = "."
+        
+        if ida_path is None and current_instance_ida_path:
+            ida_path = current_instance_ida_path
+        
+        # Check if name is already a full path
+        if os.path.exists(name):
+            library_path = os.path.abspath(name)
+        else:
+            # Search for the library
+            library_path = library_opener.find_library(name, [search_dir])
+            if library_path is None:
+                return {
+                    "success": False,
+                    "error": f"Library not found: {name}",
+                    "search_dir": search_dir,
+                    "hint": "Try specifying the full path or a different search directory"
+                }
+        
+        # Detect architecture
+        processor, bitness = library_opener.detect_architecture(library_path)
+        
+        # Open in IDA
+        try:
+            success = library_opener.open_library_in_ida(
+                library_path,
+                ida_path=ida_path,
+                auto_start_mcp=True,
+            )
+            
+            if success:
+                return {
+                    "success": True,
+                    "library_path": library_path,
+                    "architecture": f"{processor} {bitness}-bit",
+                    "ida_path_used": ida_path,
+                    "message": f"Opening {os.path.basename(library_path)} in IDA Pro. It will register with the Gateway once loaded.",
+                    "hint": "Use list_instances() to see when the new instance is ready"
+                }
+            else:
+                ida_exists = os.path.exists(ida_path) if ida_path else False
+                return {
+                    "success": False,
+                    "library_path": library_path,
+                    "ida_path_attempted": ida_path,
+                    "ida_path_exists": ida_exists,
+                    "error": "Failed to start IDA Pro - check the logs for details",
+                    "hint": "Check if IDA Pro is installed and accessible"
+                }
+        except Exception as e:
+            import traceback
+            return {
+                "success": False,
+                "library_path": library_path,
+                "ida_path_attempted": ida_path,
+                "error": f"Exception while starting IDA: {str(e)}",
+                "traceback": traceback.format_exc(),
+                "hint": "Check if IDA Pro is installed and accessible"
+            }
     
     def _forward_to_instance(self, instance: IDAInstance, body: bytes, request_id: Any):
         """Forward a request to an IDA instance"""
