@@ -26,12 +26,139 @@ else:
 GATEWAY_HOST = "127.0.0.1"
 GATEWAY_PORT = 13337
 
+# Required Gateway version (must match gateway.py GATEWAY_VERSION)
+REQUIRED_GATEWAY_VERSION = 2
+
 # Legacy configuration (single instance mode)
 IDA_HOST = "127.0.0.1"
 IDA_PORT = 13337
 
 mcp = McpServer("ida-pro-mcp")
 dispatch_original = mcp.registry.dispatch
+
+
+# ============================================================================
+# Gateway Version Check
+# ============================================================================
+
+def _get_gateway_version() -> int:
+    """Get the version of the running Gateway.
+
+    Returns:
+        Gateway version number, or 0 if version endpoint is not available (old Gateway)
+    """
+    try:
+        conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=2)
+        conn.request("GET", "/gateway/version")
+        response = conn.getresponse()
+        if response.status == 200:
+            data = json.loads(response.read())
+            conn.close()
+            return data.get("version", 0)
+        conn.close()
+        return 0  # Old Gateway without version endpoint
+    except Exception:
+        return 0
+
+
+def _shutdown_gateway() -> bool:
+    """Request the Gateway to shut down.
+
+    Returns:
+        True if shutdown request was successful
+    """
+    try:
+        conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=2)
+        conn.request("POST", "/gateway/shutdown", b"{}", {"Content-Type": "application/json"})
+        response = conn.getresponse()
+        status_code = response.status
+        conn.close()
+
+        if status_code == 200:
+            return True
+
+        # Old Gateway doesn't support /gateway/shutdown, try to kill it by port
+        if status_code == 404:
+            return _force_kill_gateway()
+
+        return False
+    except Exception:
+        return False
+
+
+def _force_kill_gateway() -> bool:
+    """Force kill the Gateway process by finding and killing the process using the port.
+
+    Returns:
+        True if the process was killed successfully
+    """
+    import subprocess
+
+    if sys.platform == "win32":
+        try:
+            # Find the PID using netstat
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            for line in result.stdout.split("\n"):
+                if f":{GATEWAY_PORT}" in line and "LISTENING" in line:
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        pid = parts[-1]
+                        # Kill the process
+                        subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True, timeout=5)
+                        return True
+        except Exception:
+            pass
+    else:
+        # Unix: use lsof and kill
+        try:
+            result = subprocess.run(
+                ["lsof", "-t", f"-i:{GATEWAY_PORT}"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            pid = result.stdout.strip()
+            if pid:
+                subprocess.run(["kill", "-9", pid], capture_output=True, timeout=5)
+                return True
+        except Exception:
+            pass
+
+    return False
+
+
+def _check_and_upgrade_gateway() -> dict:
+    """Check Gateway version and upgrade if necessary.
+
+    Returns:
+        Dictionary with upgrade status
+    """
+    current_version = _get_gateway_version()
+
+    if current_version >= REQUIRED_GATEWAY_VERSION:
+        return {"upgraded": False, "version": current_version}
+
+    # Gateway is outdated, try to shut it down
+    if _shutdown_gateway():
+        # Wait for Gateway to shut down
+        import time
+        for _ in range(20):  # Max 2 seconds
+            time.sleep(0.1)
+            try:
+                conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=1)
+                conn.request("GET", "/gateway/status")
+                conn.getresponse()
+                conn.close()
+            except Exception:
+                # Gateway is down
+                return {"upgraded": True, "old_version": current_version, "message": "Old Gateway shut down. New Gateway will start when IDA plugin runs."}
+
+    return {"upgraded": False, "old_version": current_version, "error": "Failed to upgrade Gateway. Please manually close all IDA instances and restart."}
 
 
 # ============================================================================
@@ -92,7 +219,16 @@ def switch_instance(
 
         # Check if Gateway returned 404 (old Gateway version without /gateway/switch endpoint)
         if status_code == 404:
-            # Fallback: use the old method via /gateway/instances
+            # Try to upgrade Gateway automatically
+            upgrade_result = _check_and_upgrade_gateway()
+            if upgrade_result.get("upgraded"):
+                return {
+                    "success": False,
+                    "error": "Gateway was outdated and has been shut down.",
+                    "hint": "Please restart IDA to start the new Gateway, then try switch_instance again.",
+                    "upgrade_info": upgrade_result
+                }
+            # Fallback: return instance info and prompt user
             return _switch_instance_fallback(target)
 
         data = json.loads(response_data)

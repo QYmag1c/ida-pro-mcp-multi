@@ -39,6 +39,9 @@ INSTANCE_PORT_START = 13338
 INSTANCE_PORT_END = 13400
 SHUTDOWN_DELAY = 30  # seconds to wait before shutdown when no instances
 
+# Gateway version - increment this when making breaking changes
+GATEWAY_VERSION = 2
+
 
 @dataclass
 class IDAInstance:
@@ -251,11 +254,13 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         """Handle GET requests"""
         path = urlparse(self.path).path
-        
+
         if path == "/gateway/instances":
             self._handle_list_instances()
         elif path == "/gateway/status":
             self._handle_status()
+        elif path == "/gateway/version":
+            self._handle_version()
         elif path == "/sse":
             # SSE endpoint - proxy to current instance
             self._proxy_sse_request()
@@ -265,17 +270,19 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Handle POST requests"""
         path = urlparse(self.path).path
-        
+
         # Read body
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else b""
-        
+
         if path == "/gateway/register":
             self._handle_register(body)
         elif path == "/gateway/unregister":
             self._handle_unregister(body)
         elif path == "/gateway/switch":
             self._handle_switch(body)
+        elif path == "/gateway/shutdown":
+            self._handle_shutdown(body)
         elif path == "/mcp":
             self._handle_mcp_request(body)
         elif path == "/sse":
@@ -386,7 +393,30 @@ class GatewayRequestHandler(BaseHTTPRequestHandler):
             "status": "running",
             "instance_count": registry.count(),
             "gateway_port": GATEWAY_PORT,
+            "version": GATEWAY_VERSION,
         })
+
+    def _handle_version(self):
+        """Handle version request"""
+        self.send_json_response(200, {
+            "version": GATEWAY_VERSION,
+        })
+
+    def _handle_shutdown(self, body: bytes):
+        """Handle shutdown request - gracefully stop the Gateway"""
+        global _gateway_server
+        logger.info("Received shutdown request")
+        self.send_json_response(200, {
+            "success": True,
+            "message": "Gateway shutting down",
+        })
+        # Schedule shutdown in a separate thread to allow response to be sent
+        def delayed_shutdown():
+            time.sleep(0.5)  # Give time for response to be sent
+            if _gateway_server:
+                _gateway_server.stop()
+            os._exit(0)
+        threading.Thread(target=delayed_shutdown, daemon=True).start()
     
     def _handle_mcp_request(self, body: bytes):
         """Handle MCP request - route to appropriate instance"""
