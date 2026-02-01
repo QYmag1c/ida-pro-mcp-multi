@@ -70,13 +70,13 @@ def switch_instance(
     target: Annotated[str, "Instance ID or binary name to switch to"]
 ) -> dict:
     """Switch the current default IDA instance
-    
+
     Changes which IDA instance receives commands by default (when no target is specified).
     You can specify either the instance ID (e.g., 'ida_1') or the binary name (e.g., 'main.exe').
-    
+
     Args:
         target: Instance ID or binary name to switch to
-        
+
     Returns:
         Dictionary with success status and current instance info
     """
@@ -86,12 +86,108 @@ def switch_instance(
         switch_request = json.dumps({"target": target})
         conn.request("POST", "/gateway/switch", switch_request, {"Content-Type": "application/json"})
         response = conn.getresponse()
-        data = json.loads(response.read())
+        response_data = response.read()
+        status_code = response.status
         conn.close()
-        
+
+        # Check if Gateway returned 404 (old Gateway version without /gateway/switch endpoint)
+        if status_code == 404:
+            # Fallback: use the old method via /gateway/instances
+            return _switch_instance_fallback(target)
+
+        data = json.loads(response_data)
         return data
     except Exception as e:
         return {"error": f"Failed to switch instance: {e}"}
+
+
+def _switch_instance_fallback(target: str) -> dict:
+    """Fallback method for switching instance when Gateway doesn't support /gateway/switch endpoint.
+
+    This is used for compatibility with older Gateway versions.
+    First tries to switch via MCP protocol (if Gateway supports _handle_instance_management_tool),
+    then falls back to just returning instance info.
+    """
+    try:
+        # Try to switch via MCP protocol (for Gateway versions that support _handle_instance_management_tool)
+        conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=5)
+        mcp_request = json.dumps({
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": "switch_instance",
+                "arguments": {"target": target}
+            },
+            "id": 1
+        })
+        conn.request("POST", "/mcp", mcp_request, {"Content-Type": "application/json"})
+        response = conn.getresponse()
+        response_data = response.read()
+        conn.close()
+
+        # Parse the MCP response
+        mcp_response = json.loads(response_data)
+
+        # Check if the MCP call was successful
+        if "result" in mcp_response:
+            result = mcp_response["result"]
+            # The result is wrapped in content[0].text
+            if isinstance(result, dict) and "content" in result:
+                content = result.get("content", [])
+                if content and isinstance(content[0], dict) and "text" in content[0]:
+                    return json.loads(content[0]["text"])
+            return result
+
+        # If MCP call failed, fall back to just returning instance info
+        if "error" in mcp_response:
+            # Gateway doesn't support MCP-based switch, fall back to instance lookup
+            pass
+
+    except Exception:
+        # MCP-based switch failed, fall back to instance lookup
+        pass
+
+    # Final fallback: just return instance info without actually switching
+    try:
+        conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=5)
+        conn.request("GET", "/gateway/instances")
+        response = conn.getresponse()
+        data = json.loads(response.read())
+        conn.close()
+
+        if "error" in data:
+            return data
+
+        instances = data.get("instances", [])
+
+        # Find matching instance
+        target_instance = None
+        for inst in instances:
+            if inst["instance_id"] == target or inst["binary_name"] == target:
+                target_instance = inst
+                break
+
+        if not target_instance:
+            return {
+                "success": False,
+                "error": f"Instance not found: {target}",
+                "available_instances": [
+                    {"id": i["instance_id"], "binary": i["binary_name"]}
+                    for i in instances
+                ]
+            }
+
+        # Note: This fallback cannot actually switch the instance in the Gateway's state.
+        # It only returns the instance info. The user should restart the Gateway to use
+        # the new version that supports proper instance switching.
+        return {
+            "success": False,
+            "error": "Gateway is running an older version that doesn't support instance switching.",
+            "instance": target_instance,
+            "hint": "Please close all IDA instances and restart them to update the Gateway."
+        }
+    except Exception as e:
+        return {"error": f"Failed to switch instance (fallback): {e}"}
 
 
 @mcp.tool
