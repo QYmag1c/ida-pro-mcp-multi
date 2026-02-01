@@ -105,49 +105,14 @@ def _switch_instance_fallback(target: str) -> dict:
     """Fallback method for switching instance when Gateway doesn't support /gateway/switch endpoint.
 
     This is used for compatibility with older Gateway versions.
-    First tries to switch via MCP protocol (if Gateway supports _handle_instance_management_tool),
-    then falls back to just returning instance info.
+    Since older Gateway versions don't support instance switching, we can only return
+    instance info and prompt the user to restart the Gateway.
     """
-    try:
-        # Try to switch via MCP protocol (for Gateway versions that support _handle_instance_management_tool)
-        conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=5)
-        mcp_request = json.dumps({
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {
-                "name": "switch_instance",
-                "arguments": {"target": target}
-            },
-            "id": 1
-        })
-        conn.request("POST", "/mcp", mcp_request, {"Content-Type": "application/json"})
-        response = conn.getresponse()
-        response_data = response.read()
-        conn.close()
+    # Note: We cannot try to switch via MCP protocol because older Gateway versions
+    # will forward the request to IDA instances, which don't have switch_instance method.
+    # This would cause "Method 'switch_instance' not found" error in IDA.
 
-        # Parse the MCP response
-        mcp_response = json.loads(response_data)
-
-        # Check if the MCP call was successful
-        if "result" in mcp_response:
-            result = mcp_response["result"]
-            # The result is wrapped in content[0].text
-            if isinstance(result, dict) and "content" in result:
-                content = result.get("content", [])
-                if content and isinstance(content[0], dict) and "text" in content[0]:
-                    return json.loads(content[0]["text"])
-            return result
-
-        # If MCP call failed, fall back to just returning instance info
-        if "error" in mcp_response:
-            # Gateway doesn't support MCP-based switch, fall back to instance lookup
-            pass
-
-    except Exception:
-        # MCP-based switch failed, fall back to instance lookup
-        pass
-
-    # Final fallback: just return instance info without actually switching
+    # Just return instance info and prompt user to restart Gateway
     try:
         conn = http.client.HTTPConnection(GATEWAY_HOST, GATEWAY_PORT, timeout=5)
         conn.request("GET", "/gateway/instances")
@@ -576,6 +541,8 @@ mcp.registry.dispatch = dispatch_proxy
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 IDA_PLUGIN_PKG = os.path.join(SCRIPT_DIR, "ida_mcp")
 IDA_PLUGIN_LOADER = os.path.join(SCRIPT_DIR, "ida_mcp.py")
+IDA_GATEWAY_SCRIPT = os.path.join(SCRIPT_DIR, "gateway.py")
+IDA_LIBRARY_OPENER = os.path.join(SCRIPT_DIR, "library_opener.py")
 
 # NOTE: This is in the global scope on purpose
 if not os.path.exists(IDA_PLUGIN_PKG):
@@ -1226,6 +1193,13 @@ def install_ida_plugin(
     pkg_source = IDA_PLUGIN_PKG
     pkg_destination = os.path.join(ida_plugin_folder, "ida_mcp")
 
+    # Gateway and library_opener scripts (needed for multi-instance support)
+    gateway_source = IDA_GATEWAY_SCRIPT
+    gateway_destination = os.path.join(ida_plugin_folder, "gateway.py")
+
+    library_opener_source = IDA_LIBRARY_OPENER
+    library_opener_destination = os.path.join(ida_plugin_folder, "library_opener.py")
+
     # Clean up old plugin if it exists
     old_plugin = os.path.join(ida_plugin_folder, "mcp-plugin.py")
 
@@ -1244,6 +1218,18 @@ def install_ida_plugin(
                 os.remove(pkg_destination)
             if not quiet:
                 print(f"Uninstalled IDA plugin package\n  Path: {pkg_destination}")
+
+        # Remove gateway script
+        if os.path.lexists(gateway_destination):
+            os.remove(gateway_destination)
+            if not quiet:
+                print(f"Uninstalled Gateway script\n  Path: {gateway_destination}")
+
+        # Remove library_opener script
+        if os.path.lexists(library_opener_destination):
+            os.remove(library_opener_destination)
+            if not quiet:
+                print(f"Uninstalled library_opener script\n  Path: {library_opener_destination}")
 
         # Remove old plugin if it exists
         if os.path.lexists(old_plugin):
@@ -1301,6 +1287,42 @@ def install_ida_plugin(
             except OSError:
                 shutil.copytree(pkg_source, pkg_destination)
                 installed_items.append(f"package: {pkg_destination}")
+
+        # Install gateway script (for multi-instance support)
+        if os.path.exists(gateway_source):
+            gateway_realpath = (
+                os.path.realpath(gateway_destination)
+                if os.path.lexists(gateway_destination)
+                else None
+            )
+            if gateway_realpath != gateway_source:
+                if os.path.lexists(gateway_destination):
+                    os.remove(gateway_destination)
+
+                try:
+                    os.symlink(gateway_source, gateway_destination)
+                    installed_items.append(f"gateway: {gateway_destination}")
+                except OSError:
+                    shutil.copy(gateway_source, gateway_destination)
+                    installed_items.append(f"gateway: {gateway_destination}")
+
+        # Install library_opener script (for open_library support)
+        if os.path.exists(library_opener_source):
+            library_opener_realpath = (
+                os.path.realpath(library_opener_destination)
+                if os.path.lexists(library_opener_destination)
+                else None
+            )
+            if library_opener_realpath != library_opener_source:
+                if os.path.lexists(library_opener_destination):
+                    os.remove(library_opener_destination)
+
+                try:
+                    os.symlink(library_opener_source, library_opener_destination)
+                    installed_items.append(f"library_opener: {library_opener_destination}")
+                except OSError:
+                    shutil.copy(library_opener_source, library_opener_destination)
+                    installed_items.append(f"library_opener: {library_opener_destination}")
 
         if not quiet:
             if installed_items:
