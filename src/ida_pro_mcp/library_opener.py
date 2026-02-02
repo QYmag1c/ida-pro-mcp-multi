@@ -180,25 +180,71 @@ print("[MCP AutoStart] Script starting...")
 try:
     import idaapi
     import ida_auto
+    import idautils
     import idc
-    
+    import time
+
     print("[MCP AutoStart] IDA modules imported successfully")
-    
+
+    def has_segments():
+        """Check if the database has any segments (analysis has started)."""
+        try:
+            for seg_ea in idautils.Segments():
+                return True
+        except:
+            pass
+        return False
+
+    def wait_for_analysis_complete():
+        """Wait for auto-analysis to complete, ensuring analysis has actually started."""
+        print("[MCP AutoStart] Waiting for auto-analysis to complete...")
+
+        # First, wait for segments to appear (indicates analysis has started)
+        # This is important because auto_wait() returns immediately if queues are empty
+        max_wait_for_segments = 60  # Max 60 seconds to wait for segments
+        wait_interval = 0.5  # Check every 0.5 seconds
+        waited = 0
+
+        while not has_segments() and waited < max_wait_for_segments:
+            print(f"[MCP AutoStart] Waiting for segments... ({waited:.1f}s)")
+            time.sleep(wait_interval)
+            waited += wait_interval
+            # Process UI events to allow IDA to work
+            idaapi.request_refresh(idaapi.IWID_ALL)
+
+        if has_segments():
+            print("[MCP AutoStart] Segments detected, analysis has started")
+        else:
+            print("[MCP AutoStart] Warning: No segments after waiting, continuing anyway...")
+
+        # Now wait for auto-analysis to complete
+        # auto_wait() processes all queues and returns when done
+        print("[MCP AutoStart] Calling auto_wait()...")
+        ida_auto.auto_wait()
+        print("[MCP AutoStart] auto_wait() returned")
+
+        # Double-check: if auto_is_ok() returns True but we still have no segments,
+        # something might be wrong with the file
+        if ida_auto.auto_is_ok():
+            print("[MCP AutoStart] Auto-analysis queues are empty")
+
+        if has_segments():
+            print("[MCP AutoStart] Auto-analysis complete, segments present")
+        else:
+            print("[MCP AutoStart] Warning: Analysis complete but no segments found")
+
     def start_mcp_in_main_thread():
         """Start MCP plugin - must run in main thread."""
-        print("[MCP AutoStart] Waiting for auto-analysis to complete...")
-        
-        # Wait for auto-analysis (must be in main thread)
-        ida_auto.auto_wait()
-        print("[MCP AutoStart] Auto-analysis complete")
-        
+        # Wait for analysis to complete
+        wait_for_analysis_complete()
+
         # Try to run MCP plugin
         print("[MCP AutoStart] Attempting to start MCP plugin...")
         try:
             # Method 1: Try run_plugin by name
             result = idaapi.run_plugin("MCP", 0)
             print(f"[MCP AutoStart] run_plugin('MCP', 0) returned: {result}")
-            
+
             if not result:
                 # Method 2: Try loading plugin directly
                 print("[MCP AutoStart] Trying load_plugin method...")
@@ -212,15 +258,15 @@ try:
             print(f"[MCP AutoStart] Error starting MCP: {e}")
             import traceback
             traceback.print_exc()
-        
+
         return 1  # Return value for execute_sync
-    
+
     # Use UI_Hooks for reliable startup
     class MCPStarter(idaapi.UI_Hooks):
         def __init__(self):
             idaapi.UI_Hooks.__init__(self)
             self.done = False
-        
+
         def ready_to_run(self):
             if not self.done:
                 self.done = True
@@ -229,17 +275,17 @@ try:
                 # MFF_WRITE allows database modifications
                 idaapi.execute_sync(start_mcp_in_main_thread, idaapi.MFF_WRITE)
             return 0
-        
+
         def database_inited(self, is_new_database):
             print(f"[MCP AutoStart] database_inited called, is_new={is_new_database}")
             return 0
-    
+
     # Install hooks
     print("[MCP AutoStart] Installing UI hooks...")
     _mcp_starter = MCPStarter()
     _mcp_starter.hook()
     print("[MCP AutoStart] Hooks installed successfully")
-    
+
 except Exception as e:
     print(f"[MCP AutoStart] Fatal error: {e}")
     import traceback
