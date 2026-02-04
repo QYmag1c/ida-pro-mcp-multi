@@ -157,18 +157,7 @@ Then restart IDA Pro and your MCP client.
 
 ### Fresh Installation
 
-### Step 1: Set Environment Variable
-
-Add IDA's Python `site-packages` directory to your environment variables:
-
-**Windows:**
-```
-D:\your\path\to\ida\python311\Lib\site-packages
-```
-
-Add this path to your system's `PYTHONPATH` environment variable.
-
-### Step 2: Install MCP Package
+### Step 1: Install MCP Package
 
 Open a terminal in IDA's Python directory and run:
 
@@ -180,7 +169,7 @@ cd "D:\your\path\to\ida\python311"
 python.exe -m pip install --upgrade git+https://github.com/QYmag1c/ida-pro-mcp-multi
 ```
 
-### Step 3: Install IDA Plugin and Configure MCP Clients
+### Step 2: Install IDA Plugin and Configure MCP Clients
 
 ```bash
 # Install IDA plugin and configure MCP clients
@@ -192,7 +181,7 @@ python.exe -m pip install --upgrade git+https://github.com/QYmag1c/ida-pro-mcp-m
 
 **Note:** Replace `D:\your\path\to\ida` with your actual IDA Pro installation path.
 
-### Step 4: Restart
+### Step 3: Restart
 
 **Important**: Restart IDA Pro and your MCP client completely for the installation to take effect.
 

@@ -157,18 +157,7 @@ IDA_MCP_LEGACY=1
 
 ### 全新安装
 
-### 步骤 1：设置环境变量
-
-将 IDA 的 Python `site-packages` 目录添加到环境变量：
-
-**Windows:**
-```
-D:\你的路径\ida\python311\Lib\site-packages
-```
-
-将此路径添加到系统的 `PYTHONPATH` 环境变量中。
-
-### 步骤 2：安装 MCP 包
+### 步骤 1：安装 MCP 包
 
 在 IDA 的 Python 目录中打开终端并运行：
 
@@ -180,7 +169,7 @@ cd "D:\你的路径\ida\python311"
 python.exe -m pip install --upgrade git+https://github.com/QYmag1c/ida-pro-mcp-multi
 ```
 
-### 步骤 3：安装 IDA 插件并配置 MCP 客户端
+### 步骤 2：安装 IDA 插件并配置 MCP 客户端
 
 ```bash
 # 安装 IDA 插件并配置 MCP 客户端
@@ -192,7 +181,7 @@ python.exe -m pip install --upgrade git+https://github.com/QYmag1c/ida-pro-mcp-m
 
 **注意：** 将 `D:\你的路径\ida` 替换为你实际的 IDA Pro 安装路径。
 
-### 步骤 4：重启
+### 步骤 3：重启
 
 **重要**：完全重启 IDA Pro 和你的 MCP 客户端以使安装生效。
 
