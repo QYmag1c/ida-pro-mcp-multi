@@ -82,7 +82,7 @@ IDA_MCP_LEGACY=1
 
 ### 🔍 漏洞扫描
 
-AI 辅助漏洞扫描，识别潜在危险的函数调用：
+全面的漏洞扫描功能，识别潜在危险的函数调用，具有高级检测能力：
 
 **工具：**
 
@@ -93,22 +93,34 @@ AI 辅助漏洞扫描，识别潜在危险的函数调用：
 | `vuln_scan_function(addr)` | 扫描特定函数的漏洞模式 |
 | `vuln_categories()` | 列出所有漏洞类别和相关函数 |
 
-**支持的漏洞类别：**
+**支持的漏洞类别（11 个类别，150+ 个危险函数）：**
 
 | 类别 | 危险函数 | 描述 |
 |------|----------|------|
-| **格式化字符串** | printf, sprintf, fprintf 等 | 非常量格式字符串 |
-| **缓冲区溢出** | strcpy, memcpy, gets 等 | 无边界复制、可控大小 |
-| **命令注入** | system, popen, exec* 等 | 非常量命令 |
-| **整数溢出** | malloc, calloc, realloc | 可能溢出的大小 |
-| **释放后使用** | free() | 潜在的 UAF/双重释放 |
-| **路径遍历** | fopen, open 等 | 可控路径 |
-| **SQL 注入** | sqlite3_exec, mysql_query | 非常量 SQL |
+| **格式化字符串** | printf, sprintf, scanf, snprintf, syslog 等 | 非常量格式字符串，无宽度限制的 %s |
+| **缓冲区溢出** | strcpy, memcpy, gets, recv, fread 等 | 无边界复制、可控大小、scanf 中的 %s |
+| **命令注入** | system, popen, exec*, CreateProcess, ShellExecute 等 | 非常量命令 |
+| **整数溢出** | malloc, calloc, realloc, alloca, VirtualAlloc 等 | 可能溢出的大小 |
+| **释放后使用** | free, delete, HeapFree, VirtualFree 等 | 潜在的 UAF/双重释放 |
+| **路径遍历** | fopen, open, CreateFile, CopyFile 等 | 可控路径 |
+| **SQL 注入** | sqlite3_exec, mysql_query, PQexec 等 | 非常量 SQL 查询 |
+| **未检查返回值** | malloc, setuid, setgid, chdir 等 | 缺少返回值检查 |
+| **竞态条件** | access, stat, lstat 等 | TOCTOU 漏洞 |
+| **信息泄露** | write, send, sendto, fwrite 等 | 可能泄露数据 |
+| **有符号比较** | strncmp, memcmp, memchr 等 | 使用有符号比较的大小参数 |
+
+**检测特性：**
+- **格式字符串分析**：检查非常量格式字符串和无宽度限制的危险 `%s` 说明符
+- **strlen 检查**：检测无边界复制操作前是否调用了 `strlen()`
+- **返回值检查**：验证 malloc/setuid 等函数的返回值是否被正确验证
+- **MSVC 安全函数**：处理 `_s` 后缀变体（strcpy_s, sprintf_s 等）
+- **glibc 强化函数**：处理 `_chk` 后缀变体（__printf_chk, __memcpy_chk 等）
+- **风险评估**：基于参数可控性评估高/中/低/信息级别
 
 **工作流程：**
 
 1. 让 AI "扫描漏洞" 或 "scan for vulnerabilities"
-2. AI 调用 `vuln_scan()` 获取按类别的摘要
+2. AI 调用 `vuln_scan()` 获取按类别和风险级别的摘要
 3. 查看摘要并选择要深入分析的类别
 4. AI 使用 `vuln_scan_details(category)` 和 `decompile()` 分析特定发现
 

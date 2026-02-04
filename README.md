@@ -82,7 +82,7 @@ IDA_MCP_LEGACY=1
 
 ### 🔍 Vulnerability Scanning
 
-AI-assisted vulnerability scanning to identify potentially dangerous function calls:
+Comprehensive vulnerability scanning to identify potentially dangerous function calls with advanced detection:
 
 **Tools:**
 
@@ -93,22 +93,34 @@ AI-assisted vulnerability scanning to identify potentially dangerous function ca
 | `vuln_scan_function(addr)` | Scan a specific function for vulnerability patterns |
 | `vuln_categories()` | List all vulnerability categories and associated functions |
 
-**Supported Vulnerability Categories:**
+**Supported Vulnerability Categories (11 categories, 150+ dangerous functions):**
 
 | Category | Dangerous Functions | Description |
 |----------|---------------------|-------------|
-| **Format String** | printf, sprintf, fprintf, etc. | Non-constant format strings |
-| **Buffer Overflow** | strcpy, memcpy, gets, etc. | Unbounded copies, controllable sizes |
-| **Command Injection** | system, popen, exec*, etc. | Non-constant commands |
-| **Integer Overflow** | malloc, calloc, realloc | Potentially overflowing sizes |
-| **Use After Free** | free() | Potential UAF/double-free |
-| **Path Traversal** | fopen, open, etc. | Controllable paths |
-| **SQL Injection** | sqlite3_exec, mysql_query | Non-constant SQL |
+| **Format String** | printf, sprintf, scanf, snprintf, syslog, etc. | Non-constant format strings, %s without width limit |
+| **Buffer Overflow** | strcpy, memcpy, gets, recv, fread, etc. | Unbounded copies, controllable sizes, %s in scanf |
+| **Command Injection** | system, popen, exec*, CreateProcess, ShellExecute, etc. | Non-constant commands |
+| **Integer Overflow** | malloc, calloc, realloc, alloca, VirtualAlloc, etc. | Potentially overflowing sizes |
+| **Use After Free** | free, delete, HeapFree, VirtualFree, etc. | Potential UAF/double-free |
+| **Path Traversal** | fopen, open, CreateFile, CopyFile, etc. | Controllable paths |
+| **SQL Injection** | sqlite3_exec, mysql_query, PQexec, etc. | Non-constant SQL queries |
+| **Unchecked Return** | malloc, setuid, setgid, chdir, etc. | Missing return value checks |
+| **Race Condition** | access, stat, lstat, etc. | TOCTOU vulnerabilities |
+| **Information Leak** | write, send, sendto, fwrite, etc. | Potentially leaking data |
+| **Signed Comparison** | strncmp, memcmp, memchr, etc. | Size parameters with signed comparison |
+
+**Detection Features:**
+- **Format String Analysis**: Checks for non-constant format strings AND dangerous `%s` specifiers without width limits
+- **strlen Check**: Detects if `strlen()` was called before unbounded copy operations
+- **Return Value Check**: Verifies if return values from malloc/setuid/etc. are properly validated
+- **MSVC Secure Functions**: Handles `_s` suffix variants (strcpy_s, sprintf_s, etc.)
+- **glibc Fortified Functions**: Handles `_chk` suffix variants (__printf_chk, __memcpy_chk, etc.)
+- **Risk Assessment**: High/Medium/Low/Info based on parameter controllability
 
 **Workflow:**
 
 1. Ask AI to "scan for vulnerabilities"
-2. AI calls `vuln_scan()` to get a summary by category
+2. AI calls `vuln_scan()` to get a summary by category and risk level
 3. Review the summary and select categories for deep analysis
 4. AI uses `vuln_scan_details(category)` and `decompile()` to analyze specific findings
 
